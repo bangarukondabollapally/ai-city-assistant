@@ -10,23 +10,28 @@ This application provides:
 
 ---
 
+## Visual Workflow
+![Visual Architecture](assets/ai-city.png)
+
+---
+
 ## 📸 Screenshots
 
 ### Home Interface
 
-![Demo 1](screenshots/demo1.png)
+![Demo 1](assets/demo1.png)
 
 ---
 
 ### Request Types
 
-![Demo 2](screenshots/demo2.png)
+![Demo 2](assets/demo2.png)
 
 ---
 
 ### News Response
 
-![Demo 3](screenshots/demo3.png)
+![Demo 3](assets/demo3.png)
 
 ---
 
@@ -57,9 +62,10 @@ This application provides:
 ```text
 ai-city-assistant/
 │
-├── screenshots/
+├── assets/
+│   ├── ai-city.png
 │   ├── demo1.png
-│   ├── demo2.png
+│   └── demo2.png
 │   └── demo3.png
 │
 ├── .env.example

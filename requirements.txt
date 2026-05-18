@@ -1,8 +1,8 @@
-streamlit
-python-dotenv
-requests
-langchain
-langchain-core
-langchain-groq
-tavily-python
-rich
+langchain==1.3.0
+langchain_core==1.4.0
+langchain_groq==1.1.2
+python-dotenv==1.2.2
+Requests==2.34.2
+rich==15.0.0
+streamlit==1.57.0
+tavily==1.1.0
