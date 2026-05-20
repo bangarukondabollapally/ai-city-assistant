@@ -1,17 +1,19 @@
-from dotenv import load_dotenv
 import os
+from textwrap import dedent
+
 import requests
+from dotenv import load_dotenv
+from langchain.agents import AgentExecutor, create_tool_calling_agent
+from langchain.tools import tool
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_groq import ChatGroq
+from rich.console import Console
+from rich.prompt import Prompt
+from tavily import TavilyClient
+
 load_dotenv()
 
-from langchain_groq import ChatGroq
-from langchain.tools import tool
-from langchain.agents import create_agent
-from langchain.agents.middleware import wrap_tool_call
-from langchain_core.messages import ToolMessage
-from langchain_core.runnables import RunnableLambda, RunnablePassthrough
-from langchain_core.messages import HumanMessage
-from tavily import TavilyClient
-from rich import print
+console = Console()
 
 # =========================
 # 🌦️ Weather Tool
@@ -20,8 +22,11 @@ from rich import print
 def get_weather(city: str) -> str:
     """Get current weather of a city"""
     api_key = os.getenv("OPENWEATHER_API_KEY")
+    if not api_key:
+        return "Weather service is not configured (missing API key)."
+
     url = f"http://api.openweathermap.org/data/2.5/weather?q={city}&appid={api_key}&units=metric"
-    response = requests.get(url)
+    response = requests.get(url, timeout=10)
     data = response.json()
     if str(data.get("cod")) != "200":
         return f"Error: {data.get('message', 'Could not fetch weather')}"
@@ -33,15 +38,18 @@ def get_weather(city: str) -> str:
 # =========================
 # 📰 News Tool (Tavily)
 # =========================
-tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-
 @tool
 def get_news(city: str) -> str:
     """Get latest news about a city"""
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key:
+        return "News service is not configured (missing API key)."
+
+    tavily_client = TavilyClient(api_key=api_key)
     response = tavily_client.search(
         query=f"latest news in {city}",
         search_depth="basic",
-        max_results=3
+        max_results=3,
     )
     results = response.get("results", [])
     if not results:
@@ -57,60 +65,63 @@ def get_news(city: str) -> str:
     return f"Latest news in {city}:\n\n" + "\n\n".join(news_list)
 
 # =========================
-# 🛡️ Human Approval Middleware
+# 🧠 Agent
 # =========================
-@wrap_tool_call
-def human_approval(request, handler):
-    """Ask for human approval before every tool call."""
-    tool_name = request.tool_call["name"]
-    confirm = input(f"\n⚠️ Agent wants to call '{tool_name}'. Approve? (yes/no): ")
-    if confirm.lower() != "yes":
-        return ToolMessage(
-            content="Tool call denied by user.",
-            tool_call_id=request.tool_call["id"]
-        )
-    return handler(request)
+def create_city_agent() -> AgentExecutor:
+    groq_key = os.getenv("GROQ_API_KEY")
+    if not groq_key:
+        console.print("[bold red]Error: GROQ_API_KEY not found in environment variables.[/bold red]")
+        raise ValueError("GROQ_API_KEY not set")
+    llm = ChatGroq(model="llama-3.3-70b-versatile")
 
-# =========================
-# 🧠 Agent + Runnables
-# =========================
-llm = ChatGroq(model="llama-3.3-70b-versatile")
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", dedent("""
+        You are a helpful city assistant.
 
-agent = create_agent(
-    llm,
-    tools=[get_weather, get_news],
-    system_prompt="""You are a helpful city assistant.
+        Use tools whenever needed.
 
-Use tools whenever needed.
+        Do NOT show:
+        - function calls
+        - tool syntax
+        - JSON
+        - XML tags
 
-Do NOT show:
-- function calls
-- tool syntax
-- JSON
-- XML tags
+        Only return clean natural language responses to the user.
+        """).strip()),
+        MessagesPlaceholder("chat_history", optional=True),
+        ("human", "{input}"),
+        MessagesPlaceholder("agent_scratchpad"),
+    ])
 
-Only return clean natural language responses to the user.""",
-    middleware=[human_approval]
-)
+    tools = [get_weather, get_news]
+    agent = create_tool_calling_agent(llm, tools, prompt)
+    return AgentExecutor(
+        agent=agent,
+        tools=tools,
+        verbose=False,
+        handle_parsing_errors=True,
+        max_iterations=5,
+    )
 
-# Runnables chain
-format_input = RunnableLambda(
-    lambda x: {"messages": [HumanMessage(content=x["query"])]}
-)
-extract_output = RunnableLambda(
-    lambda x: str(x["messages"][-1].content)
-)
-
-chain = RunnablePassthrough() | format_input | agent | extract_output
 
 # =========================
 # 💬 CLI Loop
 # =========================
-print("[bold green]🏙️ City Agent | type 'exit' to quit[/bold green]\n")
+def main():
+    agent = create_city_agent()
+    console.print("[bold green]🏙️ City Agent | type 'exit' to quit[/bold green]\n")
 
-while True:
-    user_input = input("You: ")
-    if user_input.lower() == "exit":
-        break
-    response = chain.invoke({"query": user_input})
-    print(f"\n[bold cyan]Bot:[/bold cyan] {response}\n")
+    while True:
+        user_input = Prompt.ask("You")
+        if user_input.lower() == "exit":
+            break
+
+        try:
+            response = agent.invoke({"input": user_input, "chat_history": []})
+            console.print(f"\n[bold cyan]Bot:[/bold cyan] {response['output']}\n")
+        except Exception as e:
+            console.print(f"\n[bold red]Error:[/bold red] {str(e)}\n")
+
+
+if __name__ == "__main__":
+    main()
